@@ -1,0 +1,53 @@
+# GitLab CI example for jscpd server
+# Add this to your .gitlab-ci.yml file
+
+stages:
+  - test
+
+check_duplications:
+  stage: test
+  image: node:18
+  
+  before_script:
+    - npm install -g jscpd
+  
+  script:
+    # Start jscpd server
+    - jscpd server . --port 3000 &
+    - sleep 5
+    
+    # Get project statistics
+    - |
+      STATS=$(curl -s http://localhost:3000/stats)
+      echo "Project Statistics:"
+      echo $STATS | jq '.total'
+    
+    # Check changed files in merge request
+    - |
+      if [ -n "$CI_MERGE_REQUEST_DIFF_BASE_SHA" ]; then
+        echo "Checking files changed in MR..."
+        git diff --name-only $CI_MERGE_REQUEST_DIFF_BASE_SHA...$CI_COMMIT_SHA | while read file; do
+          if [ -f "$file" ]; then
+            echo "Checking $file..."
+            RESPONSE=$(curl -s -X POST http://localhost:3000/check \
+              -H "Content-Type: application/json" \
+              -d "{\"code\":$(jq -Rs . < "$file"),\"filename\":\"$file\"}")
+            
+            DUPLICATIONS=$(echo $RESPONSE | jq -r '.statistics.duplicationsFound')
+            PERCENTAGE=$(echo $RESPONSE | jq -r '.statistics.percentageDuplicated')
+            
+            if [ "$DUPLICATIONS" -gt 0 ]; then
+              echo "⚠️  Found $DUPLICATIONS duplication(s) in $file ($PERCENTAGE% duplicated)"
+              echo $RESPONSE | jq '.duplications'
+            fi
+          fi
+        done
+      fi
+  
+  artifacts:
+    reports:
+      junit: report.xml
+  
+  only:
+    - merge_requests
+

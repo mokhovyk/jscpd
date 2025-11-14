@@ -1,0 +1,120 @@
+name: Check PR for Code Duplications
+
+on:
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  check-duplications:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install jscpd
+        run: npm install -g jscpd
+
+      - name: Start jscpd server
+        run: |
+          jscpd server . --port 3000 &
+          sleep 5
+          echo "Server started"
+
+      - name: Check changed files for duplications
+        id: check-duplications
+        run: |
+          # Get list of changed files in the PR
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+
+          DUPLICATIONS_FOUND=0
+          TOTAL_CHECKED=0
+
+          echo "Checking changed files for duplications..."
+
+          for file in $CHANGED_FILES; do
+            if [ -f "$file" ]; then
+              echo "Checking $file..."
+              TOTAL_CHECKED=$((TOTAL_CHECKED + 1))
+
+              # Read file content and check via API
+              RESPONSE=$(curl -s -X POST http://localhost:3000/check \
+                -H "Content-Type: application/json" \
+                -d "{\"code\":$(jq -Rs . < "$file"),\"filename\":\"$file\"}")
+
+              # Parse response
+              DUPLICATIONS=$(echo $RESPONSE | jq -r '.statistics.duplicationsFound')
+              PERCENTAGE=$(echo $RESPONSE | jq -r '.statistics.percentageDuplicated')
+
+              if [ "$DUPLICATIONS" -gt 0 ]; then
+                echo "⚠️  Found $DUPLICATIONS duplication(s) in $file ($PERCENTAGE% duplicated)"
+                DUPLICATIONS_FOUND=$((DUPLICATIONS_FOUND + 1))
+
+                # Print duplication details
+                echo $RESPONSE | jq -r '.duplications[] | "   Location: \(.duplicationB.sourceId) lines \(.duplicationB.start.line)-\(.duplicationB.end.line)"'
+              else
+                echo "✅ No duplications in $file"
+              fi
+            fi
+          done
+
+          echo "DUPLICATIONS_FOUND=$DUPLICATIONS_FOUND" >> $GITHUB_OUTPUT
+          echo "TOTAL_CHECKED=$TOTAL_CHECKED" >> $GITHUB_OUTPUT
+
+      - name: Get project statistics
+        id: project-stats
+        run: |
+          STATS=$(curl -s http://localhost:3000/stats)
+          TOTAL_PERCENTAGE=$(echo $STATS | jq -r '.total.percentage')
+          TOTAL_CLONES=$(echo $STATS | jq -r '.total.clones')
+
+          echo "TOTAL_PERCENTAGE=$TOTAL_PERCENTAGE" >> $GITHUB_OUTPUT
+          echo "TOTAL_CLONES=$TOTAL_CLONES" >> $GITHUB_OUTPUT
+
+      - name: Comment on PR
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const duplicationsFound = ${{ steps.check-duplications.outputs.DUPLICATIONS_FOUND }};
+            const totalChecked = ${{ steps.check-duplications.outputs.TOTAL_CHECKED }};
+            const projectPercentage = ${{ steps.project-stats.outputs.TOTAL_PERCENTAGE }};
+            const totalClones = ${{ steps.project-stats.outputs.TOTAL_CLONES }};
+
+            let message = `## 🔍 Code Duplication Check\n\n`;
+
+            if (duplicationsFound > 0) {
+              message += `⚠️ **Warning**: Found duplications in ${duplicationsFound} of ${totalChecked} changed files.\n\n`;
+              message += `Please review the duplications and consider refactoring.\n\n`;
+            } else {
+              message += `✅ **Good news**: No duplications found in the ${totalChecked} changed files.\n\n`;
+            }
+
+            message += `### Project Statistics\n`;
+            message += `- Total duplications in project: ${totalClones}\n`;
+            message += `- Overall duplication percentage: ${projectPercentage}%\n`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: message
+            });
+
+      - name: Fail if threshold exceeded
+        run: |
+          DUPLICATIONS=${{ steps.check-duplications.outputs.DUPLICATIONS_FOUND }}
+          THRESHOLD=0
+
+          if [ "$DUPLICATIONS" -gt "$THRESHOLD" ]; then
+            echo "❌ Found $DUPLICATIONS files with duplications (threshold: $THRESHOLD)"
+            exit 1
+          fi
+

@@ -46,6 +46,18 @@ export async function jscpd(argv: string[], exitCallback?: (code: number) => {})
 
   const packageJson = readJSONSync(__dirname + '/../package.json');
 
+  if (argv.length > 2 && argv[2] === 'server') {
+    const {JscpdServer} = await import('./server');
+
+    const serverPath = argv[3] || process.cwd();
+    const portIndex = argv.indexOf('--port') !== -1 ? argv.indexOf('--port') : argv.indexOf('-p');
+    const port = portIndex !== -1 && argv[portIndex + 1] ? parseInt(argv[portIndex + 1], 10) : 3000;
+
+    const server = new JscpdServer(serverPath, {});
+    await server.start(port);
+    return Promise.resolve([]);
+  }
+
   const cli = initCli(packageJson, argv);
 
   const options: IOptions = initOptionsFromCli(cli);
