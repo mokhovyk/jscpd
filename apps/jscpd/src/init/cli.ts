@@ -50,7 +50,15 @@ export function initCli(packageJson: any, argv: string[]): Command {
 		.option('-v, --verbose', 'show full information during detection process')
 		.option('--list', 'show list of total supported formats')
 		.option('--skipLocal', 'skip duplicates in local folders, just detect cross folders duplications')
-    .option('--exitCode [number]', 'exit code to use when code duplications are detected')
+    .option('--exitCode [number]', 'exit code to use when code duplications are detected');
+
+	cli.command('server [path]')
+		.description('Start jscpd as a server')
+		.option('-p, --port [number]', 'port to run the server on (Default is 3000)')
+		.option('--host [string]', 'host to bind the server to (Default is 0.0.0.0)')
+		.action((path, options) => {
+			// This will be handled in index.ts
+		});
 
 	cli.parse(argv);
 	return cli as Command;

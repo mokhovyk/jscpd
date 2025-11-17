@@ -48,6 +48,35 @@ export async function jscpd(argv: string[], exitCallback?: (code: number) => {})
 
   const cli = initCli(packageJson, argv);
 
+  if (argv.includes('server')) {
+    const { startServer } = await import('./server');
+    const serverCommand = cli.commands.find((cmd) => cmd.name() === 'server');
+
+    if (serverCommand) {
+      const serverArgs = serverCommand.args[0];
+      const serverOpts = serverCommand.opts();
+      const workingDirectory = serverArgs || process.cwd();
+
+      const port = serverOpts.port ? parseInt(serverOpts.port, 10) : 3000;
+      const host = serverOpts.host || '0.0.0.0';
+
+      const options: IOptions = initOptionsFromCli(cli);
+
+      try {
+        await startServer(workingDirectory, {
+          port,
+          host,
+          jscpdOptions: options,
+        });
+      } catch (error) {
+        console.error('Failed to start server:', error);
+        exitCallback?.(1);
+      }
+
+      return Promise.resolve([]);
+    }
+  }
+
   const options: IOptions = initOptionsFromCli(cli);
 
   if (options.list) {
